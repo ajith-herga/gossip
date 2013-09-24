@@ -18,20 +18,34 @@ public class GossipUdpServer {
  
     public GossipUdpServer() {
     	long currentTime = System.currentTimeMillis();
+    	InetAddress localInet = null;
+		try {
+			localInet = InetAddress.getLocalHost();
+		} catch (UnknownHostException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+			System.out.println("Could noe get local host, kill");
+			System.exit(0);
+		}
     	for (int i = 1024; i < 1500; i++) {
 		    try {
-				socket = new DatagramSocket(i);
+				socket = new DatagramSocket(i, localInet);
 			} catch (SocketException e) {
 			    System.err.printf("Could not listen on port: %d, Trying %d\n", i, i+1);
 				continue;
 			}
 		    break;
     	}
+    	
+    	System.out.println("Experiment localInet" + localInet.getHostAddress());
+    	System.out.println("Experiment socket" + socket.getLocalAddress().getHostAddress());
+    	System.out.println("Experiment getInetAddress" + socket.getInetAddress());
     	selfInetSock = new InetSocketAddress(socket.getLocalAddress(), socket.getLocalPort());
     	
-    	String id = selfInetSock.getAddress().toString() + ":" + 
+    	String id = selfInetSock.getHostName() + ":" + 
     	            	selfInetSock.getPort() + ":" + currentTime;
     	TableEntry first = new TableEntry(id, 0);
+    	membTable = new HashMap<String, TableEntry>();
     	membTable.put(id, first);
     	
     	//TODO get from CLI the details of the first contact and fill table.
@@ -148,12 +162,23 @@ public class GossipUdpServer {
 			System.out.println("Transmitter: Running");
 			// TODO Get two machines at random from membTable and send membTable to those machines.
 			
-			InetAddress address = selfInetSock.getAddress();
-			int port = selfInetSock.getPort();
-            String tx = "Hi";
-            byte[] outbuf = tx.getBytes();
-			DatagramPacket sendpacket = new DatagramPacket(outbuf, outbuf.length, address, port);
-			send(sendpacket);
+			//Loop over the members of membTable
+			for (TableEntry entry: membTable.values()) {
+				String[] dataItems = entry.id.split(":");
+				
+				InetAddress address = null;
+				try {
+					address = InetAddress.getByName(dataItems[0]);
+				} catch (UnknownHostException e) {
+					e.printStackTrace();
+					continue;
+				}
+				int port = Integer.parseInt(dataItems[1]);
+	            String tx = "Hi";
+	            byte[] outbuf = tx.getBytes();
+				DatagramPacket sendpacket = new DatagramPacket(outbuf, outbuf.length, address, port);
+				send(sendpacket);
+			}
 			System.out.println("Transmitter: Done");
 		}
 	}
