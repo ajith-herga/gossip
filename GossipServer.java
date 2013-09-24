@@ -14,7 +14,7 @@ public class GossipServer {
 		System.out.println("Server: Shutdown hook attached");		
 		serv.startrun();
 
-		GossipUdpServer gen = new GossipUdpServer();
+		GossipUdpServer gen = new GossipUdpServer(args);
 		System.out.println("Server:started ");		
 		System.out.println("Main: Done");
 		while(true){

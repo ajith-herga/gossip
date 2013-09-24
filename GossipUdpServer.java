@@ -1,10 +1,14 @@
 
 
+import java.lang.reflect.Type;
 import java.net.*;
 import java.util.HashMap;
 import java.util.TimerTask;
 import java.util.Timer;
 import java.io.*;
+
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 
 public class GossipUdpServer {
 	final long OFFSET = 3000;
@@ -14,9 +18,10 @@ public class GossipUdpServer {
     Transmitter kpObj = null;
     Receiver rxObj = null;
     HashMap<String, TableEntry> membTable = null;
+	TableEntry selfEntry = null;
 
  
-    public GossipUdpServer() {
+    public GossipUdpServer(String[] args) {
     	long currentTime = System.currentTimeMillis();
     	InetAddress localInet = null;
 		try {
@@ -24,7 +29,7 @@ public class GossipUdpServer {
 		} catch (UnknownHostException e1) {
 			// TODO Auto-generated catch block
 			e1.printStackTrace();
-			System.out.println("Could noe get local host, kill");
+			System.out.println("Could not get local host, kill");
 			System.exit(0);
 		}
     	for (int i = 1024; i < 1500; i++) {
@@ -36,7 +41,6 @@ public class GossipUdpServer {
 			}
 		    break;
     	}
-    	
     	System.out.println("Experiment localInet" + localInet.getHostAddress());
     	System.out.println("Experiment socket" + socket.getLocalAddress().getHostAddress());
     	System.out.println("Experiment getInetAddress" + socket.getInetAddress());
@@ -44,9 +48,15 @@ public class GossipUdpServer {
     	
     	String id = selfInetSock.getHostName() + ":" + 
     	            	selfInetSock.getPort() + ":" + currentTime;
-    	TableEntry first = new TableEntry(id, 0);
+    	selfEntry = new TableEntry(id, 0);
     	membTable = new HashMap<String, TableEntry>();
-    	membTable.put(id, first);
+    	membTable.put(id, selfEntry);
+    	System.out.println(args);
+    	System.out.println(selfEntry.id);
+    	if( args != null && args.length != 0 && args[0] != null ){
+    		TableEntry contact = new TableEntry(args[0], 0);
+        	membTable.put(contact.id, contact);
+    	}
     	
     	//TODO get from CLI the details of the first contact and fill table.
     	rxObj = new Receiver();
@@ -67,15 +77,20 @@ public class GossipUdpServer {
     		hasFailed = false;
     	}
     	
+    	public void updateTime(){
+    		this.jiffies = System.currentTimeMillis();
+    	}
+    	
     	public void incHrtBeat() {
     		this.hrtBeat++;
-    		this.jiffies = System.currentTimeMillis();
+    		updateTime();
       	}
     	
     	public void cmpAndUpdateHrtBeat(long hrtBeat, long currentTime) {
     		if (hrtBeat <= this.hrtBeat || hasFailed) {
     			return;
     		}
+    		System.out.println("Changing heartbeat");
     		this.hrtBeat = hrtBeat;
     		this.jiffies = currentTime;
     	}
@@ -109,21 +124,26 @@ public class GossipUdpServer {
 		private boolean processPacket(DatagramPacket packet) {
 			String rx = new String(packet.getData(), 0, packet.getLength());
 			System.out.println("Recieve: Got " + rx);
-			
-			if (rx.equals("Table")) {
-                mergeMembTable(null);
-			} if (rx.equals("OK")) {
-			}
+			Gson gson = new Gson();
+			Type collectionType = new TypeToken<HashMap<String,TableEntry>>(){}.getType();
+			HashMap<String, TableEntry> temp = gson.fromJson(rx,collectionType);
+            mergeMembTable(temp);
 			return false;
 		}
 
 
 		public void mergeMembTable(HashMap<String, TableEntry> temp) {
+			System.out.println(temp.toString());
 			long currentTime = System.currentTimeMillis();
 			for (TableEntry entry: temp.values()) {
 				if (membTable.containsKey(entry.id)) {
+					System.out.println("Known Machine");
 					TableEntry oldEntry = membTable.get(entry.id);
 					oldEntry.cmpAndUpdateHrtBeat(entry.hrtBeat, currentTime);
+				}else{
+					System.out.println("New Machine");
+					membTable.put(entry.id, entry);
+					entry.updateTime();
 				}
 			}
 		}
@@ -151,6 +171,7 @@ public class GossipUdpServer {
 	
 	private class Transmitter extends TimerTask {
 
+		
 		public void start() {
 			// TODO Run this every some other time
 			keepAliveTimer = new Timer();
@@ -161,9 +182,18 @@ public class GossipUdpServer {
 		public void run() {
 			System.out.println("Transmitter: Running");
 			// TODO Get two machines at random from membTable and send membTable to those machines.
-			
+			boolean incr_hrtbt = true;
 			//Loop over the members of membTable
 			for (TableEntry entry: membTable.values()) {
+				if(entry.equals(selfEntry)){
+					continue;
+				}
+
+				// Increment Heartbeat once only if there are other known machines
+				if(incr_hrtbt){
+					selfEntry.incHrtBeat();
+					incr_hrtbt = false;
+				}
 				String[] dataItems = entry.id.split(":");
 				
 				InetAddress address = null;
@@ -174,7 +204,8 @@ public class GossipUdpServer {
 					continue;
 				}
 				int port = Integer.parseInt(dataItems[1]);
-	            String tx = "Hi";
+	            Gson gson = new Gson();
+				String tx = gson.toJson(membTable);
 	            byte[] outbuf = tx.getBytes();
 				DatagramPacket sendpacket = new DatagramPacket(outbuf, outbuf.length, address, port);
 				send(sendpacket);
@@ -187,7 +218,7 @@ public class GossipUdpServer {
 	 */
 	public static void main(String[] args) {
 		// TODO Auto-generated method stub
-		GossipUdpServer gen = new GossipUdpServer();
+		GossipUdpServer gen = new GossipUdpServer(args);
 		
 	}
 }
