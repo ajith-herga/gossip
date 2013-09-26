@@ -1,26 +1,32 @@
 
-
 import java.lang.reflect.Type;
 import java.net.*;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.TimerTask;
 import java.util.Timer;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.io.*;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
 public class GossipUdpServer {
-	final long OFFSET = 3000;
+	public static final long TRANSMITTER_PERIOD = 1000;
     DatagramSocket socket = null;
 	InetSocketAddress selfInetSock = null;
-    Timer keepAliveTimer = null;
-    Transmitter kpObj = null;
+    Transmitter txObj = null;
     Receiver rxObj = null;
-    HashMap<String, TableEntry> membTable = null;
+    TimeOutManager toObj = null;
+    ConcurrentHashMap<String, TableEntry> membTable = null;
 	TableEntry selfEntry = null;
-
- 
+	public static final long TIMEOUT = 3000;
+	public static final long TIMER_PERIOD = 300;
+	private final ReentrantLock lock = new ReentrantLock();
+	
     public GossipUdpServer(String[] args) {
     	long currentTime = System.currentTimeMillis();
     	InetAddress localInet = null;
@@ -49,7 +55,7 @@ public class GossipUdpServer {
     	String id = selfInetSock.getHostName() + ":" + 
     	            	selfInetSock.getPort() + ":" + currentTime;
     	selfEntry = new TableEntry(id, 0);
-    	membTable = new HashMap<String, TableEntry>();
+    	membTable = new ConcurrentHashMap<String, TableEntry>();
     	membTable.put(id, selfEntry);
     	System.out.println(args);
     	System.out.println(selfEntry.id);
@@ -61,15 +67,18 @@ public class GossipUdpServer {
     	//TODO get from CLI the details of the first contact and fill table.
     	rxObj = new Receiver();
     	rxObj.start();
-    	kpObj = new Transmitter();
-    	kpObj.start();
+    	txObj = new Transmitter();
+    	txObj.start();
+    	toObj = new TimeOutManager();
+    	toObj.start();
 	}
 
     public class TableEntry {
     	String id = null;
     	long hrtBeat, jiffies;
     	boolean hasFailed;
-    	int deadCount = 10;
+    	long deadCount = TIMEOUT/TIMER_PERIOD;
+    	
     	TableEntry(String id, long hrtBeat){
     		this.id = id;
     		this.hrtBeat = hrtBeat;
@@ -77,16 +86,16 @@ public class GossipUdpServer {
     		hasFailed = false;
     	}
     	
-    	public void updateTime(){
+    	public synchronized void updateTime(){
     		this.jiffies = System.currentTimeMillis();
     	}
     	
-    	public void incHrtBeat() {
+    	public synchronized void incHrtBeat() {
     		this.hrtBeat++;
     		updateTime();
       	}
     	
-    	public void cmpAndUpdateHrtBeat(long hrtBeat, long currentTime) {
+    	public synchronized void cmpAndUpdateHrtBeat(long hrtBeat, long currentTime) {
     		if (hrtBeat <= this.hrtBeat || hasFailed) {
     			return;
     		}
@@ -95,17 +104,20 @@ public class GossipUdpServer {
     		this.jiffies = currentTime;
     	}
     	
-    	public void timerCheck(long currentTime) {
-    		if (currentTime > jiffies + OFFSET) {
+    	public synchronized boolean timerCheck(long currentTime) {
+    		if (!hasFailed && currentTime > jiffies + TIMEOUT) {
     			hasFailed = true;
+    			System.out.println("Machine marked as failed : "+ id);
     		}
     		if (hasFailed) {
+    			System.out.println("Deadcount: "+ deadCount);
     			if (deadCount == 0) {
-    				membTable.remove(id);
+    				return true;
     			} else {
     				deadCount--;
     			}
     		}
+    		return false;
     	}
     }
 
@@ -169,17 +181,56 @@ public class GossipUdpServer {
 		}
 	}
 	
-	private class Transmitter extends TimerTask {
+	private class TimeOutManager extends TimerTask{
 
-		
+		Timer timeoutTimer = null;
+
 		public void start() {
 			// TODO Run this every some other time
-			keepAliveTimer = new Timer();
-			keepAliveTimer.schedule(this, 0, 3*1000);
+			timeoutTimer = new Timer();
+			timeoutTimer.schedule(this, 0, TIMER_PERIOD);
 		}
 
 		@Override
 		public void run() {
+			lock.lock();
+			// TODO Auto-generated method stub
+			long currentTime = System.currentTimeMillis();
+			List<String> toBeDeleted = new ArrayList<String>();
+			Iterator<TableEntry> iterator = membTable.values().iterator();
+			while(iterator.hasNext()) {
+				TableEntry entry = iterator.next();
+				if(entry.equals(selfEntry)){
+					continue;
+				}
+				if(entry.timerCheck(currentTime)){
+					toBeDeleted.add(entry.id);
+				}
+			}
+			for(String id: toBeDeleted){
+				membTable.remove(id);
+			}
+			lock.unlock();
+		}
+		
+	}
+	private class Transmitter extends TimerTask {
+	    Timer transmitterTimer = null;
+		
+		public void start() {
+			// TODO Run this every some other time
+			transmitterTimer = new Timer();
+			transmitterTimer.schedule(this, 0, TRANSMITTER_PERIOD);
+		}
+
+		public void stop() {
+			// TODO Auto-generated method stub
+			transmitterTimer.cancel();
+		}
+
+		@Override
+		public void run() {
+			lock.lock();
 			System.out.println("Transmitter: Running");
 			// TODO Get two machines at random from membTable and send membTable to those machines.
 			boolean incr_hrtbt = true;
@@ -211,6 +262,7 @@ public class GossipUdpServer {
 				send(sendpacket);
 			}
 			System.out.println("Transmitter: Done");
+			lock.unlock();
 		}
 	}
 	/**
