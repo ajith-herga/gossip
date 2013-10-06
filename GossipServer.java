@@ -3,9 +3,9 @@ public class GossipServer {
 	public static void main(String[] args) {
 		//System.out.println("Main: Begin");
 		final GrepServer serv = new GrepServer();
-		System.out.println("Server: Port Acquired");		
+		System.out.println("Server: Port Acquired");
 		serv.startrun();
-		final GossipUdpServer gen = new GossipUdpServer(args);
+		final GossipUdpServer gen = new GossipUdpServer(args, serv.localPort);
 		System.out.println("Server:started ");		
 		Runtime.getRuntime().addShutdownHook(new Thread(){
 			@Override

@@ -1,1 +1,3 @@
 export CLASSPATH="lib/gson-2.2.4.jar:."
+alias jg="java GossipServer"
+alias jc="java GrepClient"

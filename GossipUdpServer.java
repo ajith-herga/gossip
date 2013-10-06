@@ -2,6 +2,7 @@
 import java.lang.reflect.Type;
 import java.net.*;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -27,9 +28,13 @@ public class GossipUdpServer {
 	public static final long TIMEOUT = 3000;
 	public static final long TIMER_PERIOD = 300;
 	public static final long DEADCOUNT = 15;
+	public static final long TEST_MAX = 3;
 	private final ReentrantLock lock = new ReentrantLock();
-	
-    public GossipUdpServer(String[] args) {
+	BufferedWriter bw = null;
+	checkDrop cDrop = null;
+	checkBand cBand = null;
+
+    public GossipUdpServer(String[] args, String localPort) {
     	long currentTime = System.currentTimeMillis();
     	InetAddress localInet = null;
 		try {
@@ -54,25 +59,35 @@ public class GossipUdpServer {
     	//System.out.println("Experiment getInetAddress" + socket.getInetAddress());
     	selfInetSock = new InetSocketAddress(socket.getLocalAddress(), socket.getLocalPort());
     	
-    	String id = selfInetSock.getHostName() + ":" + 
-    	            	selfInetSock.getPort() + ":" + currentTime;
+    	String id = selfInetSock.getHostName() + "___" + 
+    	            	selfInetSock.getPort() + "___" + currentTime;
     	selfEntry = new TableEntry(id, 0);
     	membTable = new ConcurrentHashMap<String, TableEntry>();
     	membTable.put(id, selfEntry);
-    	System.out.println(args);
     	System.out.println(selfEntry.id);
     	if( args != null && args.length != 0 && args[0] != null ){
     		TableEntry contact = new TableEntry(args[0], 1);
         	membTable.put(contact.id, contact);
     	}
     	
+    	try {
+			bw = new BufferedWriter(new FileWriter("/tmp/testlog_" + localPort, false));
+		} catch (IOException e) {
+			e.printStackTrace();
+			System.exit(1);
+		}
+    	
     	//TODO get from CLI the details of the first contact and fill table.
+    	cBand = new checkBand();
+
     	rxObj = new Receiver();
     	rxObj.start();
     	txObj = new Transmitter();
     	txObj.start();
     	toObj = new TimeOutManager();
     	toObj.start();
+    	
+    	cDrop = new checkDrop();
 	}
 
     public class TableEntry {
@@ -97,38 +112,41 @@ public class GossipUdpServer {
     		updateTime();
       	}
     	
-    	public synchronized void cmpAndUpdateHrtBeat(long hrtBeat, long currentTime) {
+    	public synchronized boolean cmpAndUpdateHrtBeat(long hrtBeat, long currentTime) {
     		if (hrtBeat == 0) {
     			hasFailed = true;
     			System.out.println("Machine marked as Left : "+ id);
+    			return true;
     		}
     		if (hrtBeat <= this.hrtBeat || hasFailed) {
-    			return;
+    			return false;
     		}
     		//System.out.println("Changing heartbeat");
     		this.hrtBeat = hrtBeat;
     		this.jiffies = currentTime;
+    		return false;
     	}
     	
-    	public synchronized boolean timerCheck(long currentTime) {
+    	public synchronized int timerCheck(long currentTime) {
     		if (!hasFailed && currentTime > jiffies + TIMEOUT) {
     			hasFailed = true;
-    			System.out.println("Machine marked as failed : "+ id);
+    			System.out.println("Machine marked as Failed : "+ id);
+    			return 0;
     		}
     		if (hasFailed) {
     			//System.out.println("Deadcount: "+ deadCount);
     			if (deadCount == 0) {
-    				return true;
+    				return 1;
     			} else {
     				deadCount--;
     			}
     		}
-    		return false;
+    		return -1;
     	}
     }
 
     private synchronized void SendMembList(TableEntry entry) throws UnknownHostException {
-		String[] dataItems = entry.id.split(":");
+		String[] dataItems = entry.id.split("___");
 		
 		InetAddress address = null;
 		address = InetAddress.getByName(dataItems[0]);
@@ -192,6 +210,70 @@ public class GossipUdpServer {
         return subList;
     }
     
+    private class checkDrop {
+    	int running_count = 0;
+    	long counts = 0;
+    	int[] arrCheck = {29,34,41,72,97};
+    	boolean trigger = false;
+    }
+    
+    private void dropSend(DatagramPacket packet) {
+    	if (membTable.size() < TEST_MAX && !cDrop.trigger) {
+    		send(packet);
+    		return;
+    	}
+		cDrop.counts++;
+		if (cDrop.counts < 60) {
+    		send(packet);
+    		return;
+		} else if (cDrop.counts == 60) {
+			System.out.println("----------Start Dropping---------");
+		}
+		cDrop.trigger = true;
+    	
+    	if (cDrop.running_count == 99) {
+    		System.out.println("--------Cycle Boundary-------");
+    		cDrop.running_count = -1;
+    	}
+		cDrop.running_count ++;
+    	for (int i : cDrop.arrCheck) {
+    		if (i == cDrop.running_count) {
+    			//System.out.println("-----Skipping Packet Send-----");
+    			return;
+    		}
+    	}
+    	send(packet);
+    }
+ 
+    private class checkBand {
+    	double byte_count = 0;
+    	double time_last = 0;
+    	double bandWidth = 0;
+    	double prev_count = 0;
+    	int lastBand = 0;
+    	public checkBand() {
+    		time_last = System.currentTimeMillis();
+    	}
+    	
+    	public void calcBand(long time) {
+    		if (lastBand != 20) {
+    			lastBand++;
+    			return;
+    		}
+    		bandWidth = (byte_count - prev_count)/((time - time_last));
+    		time_last = time;
+    		prev_count = byte_count;
+    		System.out.println(time + " " + bandWidth);
+    		lastBand = 0;
+    	}
+    	
+    }
+
+    private void bandSend(DatagramPacket packet) {
+    	cBand.byte_count += packet.getData().length;
+    	send(packet);
+    }
+    
     private void send(DatagramPacket packet) {
 		try {
 			socket.send(packet);
@@ -223,16 +305,34 @@ public class GossipUdpServer {
 				if (membTable.containsKey(entry.id)) {
 					//System.out.println("Known Machine");
 					TableEntry oldEntry = membTable.get(entry.id);
-					oldEntry.cmpAndUpdateHrtBeat(entry.hrtBeat, currentTime);
+					if (oldEntry.cmpAndUpdateHrtBeat(entry.hrtBeat, currentTime)) {
+		    			try {
+							bw.write(entry.id + ": Left   at " + new Date(currentTime));
+							bw.newLine(); 
+							bw.flush();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+					}
 				}else{
-					System.out.println("New Machine: " + entry.hrtBeat);
+					//System.out.println("New Entry: " + entry.id);
 					membTable.put(entry.id, entry);
 					entry.updateTime();
-					if (entry.hrtBeat > 1) {
-						// IF < 5 (good until 32 machines) then joinee
-						// Else its a member getting introduced to new joinee
-						// Reflect that in the logs
-						return;
+					if (entry.hrtBeat >= 1) {
+						if (entry.hrtBeat < 5) {
+							try {
+								System.out.println("Joined: " + entry.id);
+								bw.write(entry.id + ": Joined at " + new Date(currentTime));
+								bw.newLine();
+								bw.flush();
+							} catch (IOException e) {
+								e.printStackTrace();
+							}
+						}
+						if (entry.hrtBeat > 1) {
+							//Spaghetti code.
+							return;
+						}
 					}
 					// Only the first to be introduced need to send all of his
 					// table to joinee, rest will be taken up by joinee in Tx,
@@ -244,7 +344,7 @@ public class GossipUdpServer {
 						// and the intro itself is the first join.
 						selfEntry.hrtBeat++;
 						selfEntry.incHrtBeat();
-						System.out.println("Tx Intro to " + entry.id);
+						//System.out.println("Tx Intro to " + entry.id);
 						SendMembList(entry);
 					} catch (UnknownHostException e) {
 						e.printStackTrace();
@@ -292,16 +392,29 @@ public class GossipUdpServer {
 			// TODO Auto-generated method stub
 			long currentTime = System.currentTimeMillis();
 			List<String> toBeDeleted = new ArrayList<String>();
+			
+			//cBand.calcBand(currentTime);
+			
 			Iterator<TableEntry> iterator = membTable.values().iterator();
 			while(iterator.hasNext()) {
 				TableEntry entry = iterator.next();
 				if(entry.equals(selfEntry)){
 					continue;
 				}
-				if(entry.timerCheck(currentTime)){
+				int k = entry.timerCheck(currentTime);
+				if(k == 1){
 					toBeDeleted.add(entry.id);
+				} else if (k == 0) { 
+	    			try {
+						bw.write(entry.id + ": Failed at " + new Date(currentTime));
+						bw.newLine();
+						bw.flush();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
 				}
 			}
+			
 			for(String id: toBeDeleted){
 				membTable.remove(id);
 			}
@@ -341,10 +454,10 @@ public class GossipUdpServer {
 			}
 
 			//Loop over the members of the randomized list.
-			System.out.println("--------------------------");
+			//System.out.println("--------------------------");
 			for (TableEntry entry: tE) {
 				try {
-					System.out.println("Tx Gossip to " + entry.id);
+					//System.out.println("Tx Gossip to " + entry.id);
 					SendMembList(entry);
 				} catch (UnknownHostException e) {
 					e.printStackTrace();
@@ -372,7 +485,13 @@ public class GossipUdpServer {
 		} catch (UnknownHostException e) {
 			e.printStackTrace();
 		}
+		try {
+			bw.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 	}
+
 	public static void main(String[] args) {
 		// TODO Auto-generated method stub
 		

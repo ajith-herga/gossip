@@ -105,9 +105,9 @@ public class GrepServer {
 				out = new PrintWriter(clientSocket.getOutputStream(), true);
 				in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
 				if ((inputLine = in.readLine()) != null) {
-					System.out.printf("Worker: Received %s\n", inputLine);
+					//System.out.printf("Worker: Received %s\n", inputLine);
 					if (inputLine.startsWith("grep ")) {
-						while ((cmdOut = grep.processInput(inputLine, "/tmp/machine.log_45")) != null) {
+						while ((cmdOut = grep.processInput(inputLine, "/tmp/testlog_" + localPort)) != null) {
 							out.println(cmdOut);
 						}
 					} else if (inputLine.startsWith("test")) {
@@ -214,7 +214,7 @@ public class GrepServer {
 	 * @param args
 	 */
 	public static void main(String[] args) {
-		System.out.println("Main: Begin");
+		//System.out.println("Main: Begin");
 		final GrepServer serv = new GrepServer();
 		System.out.println("Server: Port Acquired");		
 		Runtime.getRuntime().addShutdownHook(new Thread(){
@@ -227,7 +227,7 @@ public class GrepServer {
 		System.out.println("Server: Shutdown hook attached");		
 		serv.startrun();
 		System.out.println("Server:started ");		
-		System.out.println("Main: Done");
+		//System.out.println("Main: Done");
 		while(true){
 			try {
 				Thread.sleep(1000L);

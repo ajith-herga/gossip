@@ -70,8 +70,8 @@ public class GrepClient {
         public Requester(String _hostName, String _portOne) {
             hostName = _hostName;
             portOne = _portOne;
-			System.out.printf("Client: Construct: Reg Servers: %s %s\n",
-			                  hostName, portOne);
+			//System.out.printf("Client: Construct: Reg Servers: %s %s\n",
+			                  //hostName, portOne);
 	        try {
 	            sock = new Socket(hostName, Integer.parseInt(portOne));
 	        } catch (UnknownHostException e) {
