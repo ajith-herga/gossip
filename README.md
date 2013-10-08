@@ -1,4 +1,4 @@
-Disributed Membership System
+Distributed Membership System
 ============================
 
 This system maintains membership information by use of Gossip Protocol. The joining process can introduce itself to any
