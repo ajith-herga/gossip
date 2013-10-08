@@ -1,6 +1,10 @@
 Disributed Membership System
 ============================
 
+This system maintains membership information by use of Gossip Protocol. The joining process can introduce itself to any
+member of the system already present in the group. The members can Leave/Fail from the group. All updates are visible to 
+all the members within 3 seconds. The status of the Join/Leave/Fail can be queired from the Log querier. 
+The querier can do a key--value based search on all the running systems.
 
 Steps to run the program:
 <br/>
